@@ -10,93 +10,115 @@ import LibSignalClient
 
 final class ContentViewModel: ObservableObject {
     
+    // 初期メッセージをアリスから、ボブに送り、それをボブが復号する。そしてボブが返事を送り、アリスが複合するまでのサンプル
     init() {
-        print("111111111111111")
         do {
+            // 初期セットアップ
+            let aliceAddress = try! ProtocolAddress(name: "+14151111111", deviceId: 1)
+            let bobAddress = try! ProtocolAddress(name: "+14151111112", deviceId: 1)
+
+            let aliceStore = InMemorySignalProtocolStore()
+            let bobStore = InMemorySignalProtocolStore()
             
-            let alice_address = try! ProtocolAddress(name: "+14151111111", deviceId: 1)
-            let bob_address = try! ProtocolAddress(name: "+14151111112", deviceId: 1)
+            let bobPreKey = PrivateKey.generate()
+            let bobSignedPreKey = PrivateKey.generate()
 
-            let alice_store = InMemorySignalProtocolStore()
-            let bob_store = InMemorySignalProtocolStore()
-            
-            let bob_pre_key = PrivateKey.generate()
-            let bob_signed_pre_key = PrivateKey.generate()
+            let bobSignedPreKeyPublic = bobSignedPreKey.publicKey.serialize()
 
-            let bob_signed_pre_key_public = bob_signed_pre_key.publicKey.serialize()
+            let bobIdentityKey = try bobStore.identityKeyPair(context: NullContext()).identityKey
+            let bobSignedPreKeySignature = try bobStore.identityKeyPair(context: NullContext()).privateKey.generateSignature(message: bobSignedPreKeyPublic)
 
-            let bob_identity_key = try! bob_store.identityKeyPair(context: NullContext()).identityKey
-            let bob_signed_pre_key_signature = try! bob_store.identityKeyPair(context: NullContext()).privateKey.generateSignature(message: bob_signed_pre_key_public)
+            let prekeyId: UInt32 = 4570
+            let signedPrekeyId: UInt32 = 3006
 
-            let prekey_id: UInt32 = 4570
-            let signed_prekey_id: UInt32 = 3006
-
-            let bob_bundle = try! PreKeyBundle(
-                registrationId: bob_store.localRegistrationId(context: NullContext()),
+            let bobBundle = try PreKeyBundle(
+                registrationId: bobStore.localRegistrationId(context: NullContext()),
                 deviceId: 9,
-                prekeyId: prekey_id,
-                prekey: bob_pre_key.publicKey,
-                signedPrekeyId: signed_prekey_id,
-                signedPrekey: bob_signed_pre_key.publicKey,
-                signedPrekeySignature: bob_signed_pre_key_signature,
-                identity: bob_identity_key
+                prekeyId: prekeyId,
+                prekey: bobPreKey.publicKey,
+                signedPrekeyId: signedPrekeyId,
+                signedPrekey: bobSignedPreKey.publicKey,
+                signedPrekeySignature: bobSignedPreKeySignature,
+                identity: bobIdentityKey
             )
 
-            // Alice processes the bundle:
-            try! processPreKeyBundle(
-                bob_bundle,
-                for: bob_address,
-                sessionStore: alice_store,
-                identityStore: alice_store,
+            // アリスがボブのPublic KeyからSessionを確立
+            try processPreKeyBundle(
+                bobBundle,
+                for: bobAddress,
+                sessionStore: aliceStore,
+                identityStore: aliceStore,
                 context: NullContext()
             )
-
-            // Bob does the same:
-            try! bob_store.storePreKey(
-                PreKeyRecord(id: prekey_id, privateKey: bob_pre_key),
-                id: prekey_id,
+            
+            let initialMessage = "Hello Bob! How are you?"
+            print("Alice Message: \(initialMessage)")
+            let initialMessageData: [UInt8] = initialMessage.toUInt8()
+            
+            let encrypted = try signalEncrypt(
+                message: initialMessageData,
+                for: bobAddress,
+                sessionStore: aliceStore,
+                identityStore: aliceStore,
                 context: NullContext()
             )
-
-            try! bob_store.storeSignedPreKey(
+            
+            print("Encrypted Message: \(encrypted.serialize().toBase64())")
+            
+            // ここからはボブの処理。受け取ったメッセージからアリスの公開鍵とボブの秘密鍵で復号
+            // ボブがアリスのPublic KeyからSessionを確立
+            try bobStore.storePreKey(
+                PreKeyRecord(id: prekeyId, privateKey: bobPreKey),
+                id: prekeyId,
+                context: NullContext()
+            )
+            try bobStore.storeSignedPreKey(
                 SignedPreKeyRecord(
-                    id: signed_prekey_id,
+                    id: signedPrekeyId,
                     timestamp: 42000,
-                    privateKey: bob_signed_pre_key,
-                    signature: bob_signed_pre_key_signature
+                    privateKey: bobSignedPreKey,
+                    signature: bobSignedPreKeySignature
                 ),
-                id: signed_prekey_id,
-                context: NullContext()
-            )
-            
-            
-            
-            let ptext_a: [UInt8] = "hellow workd!! go!!".toUInt8()
-            
-            let ctext_a = try! signalEncrypt(
-                message: ptext_a,
-                for: bob_address,
-                sessionStore: alice_store,
-                identityStore: alice_store,
+                id: signedPrekeyId,
                 context: NullContext()
             )
 
-            let ctext_b = try! PreKeySignalMessage(bytes: ctext_a.serialize())
-            
-            print(try ctext_b.serialize().toBase64())
-
-            let ptext_b = try! signalDecryptPreKey(
-                message: ctext_b,
-                from: alice_address,
-                sessionStore: bob_store,
-                identityStore: bob_store,
-                preKeyStore: bob_store,
-                signedPreKeyStore: bob_store,
-                kyberPreKeyStore: bob_store,
+            let decryptedBytes = try signalDecryptPreKey(
+                message: try PreKeySignalMessage(bytes: encrypted.serialize()),
+                from: aliceAddress,
+                sessionStore: bobStore,
+                identityStore: bobStore,
+                preKeyStore: bobStore,
+                signedPreKeyStore: bobStore,
+                kyberPreKeyStore: bobStore,
                 context: NullContext()
             )
             
-            print(String(bytes: ptext_b, encoding: String.Encoding.utf8))
+            let decrypted = String(bytes: decryptedBytes, encoding: String.Encoding.utf8)!
+            print("Decrypted Message: \(decrypted)")
+            
+            // ボブが返事する
+            let bobReplyMessage = "Long time no see, Alice. I'm fine."
+            print("Bob Reply Message: \(bobReplyMessage)")
+            let encryptedReply = try signalEncrypt(
+                message: bobReplyMessage.toUInt8(),
+                for: aliceAddress,
+                sessionStore: bobStore,
+                identityStore: bobStore,
+                context: NullContext()
+            )
+            print("Encrypted Reply Message: \(encryptedReply.serialize().toBase64())")
+            
+            // アリスが復号する
+            let decryptedReplyBytes = try! signalDecrypt(
+                message: try SignalMessage(bytes: encryptedReply.serialize()),
+                from: bobAddress,
+                sessionStore: aliceStore,
+                identityStore: aliceStore,
+                context: NullContext()
+            )
+            let decryptedReply = String(bytes: decryptedReplyBytes, encoding: String.Encoding.utf8)!
+            print("Decrypted Reply Message: \(decryptedReply)")
         } catch {
             print("error")
             print(error)
