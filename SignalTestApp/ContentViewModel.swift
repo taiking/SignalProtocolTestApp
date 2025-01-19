@@ -12,6 +12,11 @@ final class ContentViewModel: ObservableObject {
     
     // 初期メッセージをアリスから、ボブに送り、それをボブが復号する。そしてボブが返事を送り、アリスが複合するまでのサンプル
     init() {
+        
+        demoSignalProtocol()
+        
+        return
+        
         do {
             // 初期セットアップ
             let aliceAddress = try! ProtocolAddress(name: "+14151111111", deviceId: 1)
